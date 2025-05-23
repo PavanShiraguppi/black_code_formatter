@@ -143,6 +143,41 @@
       "type": "boolean",
       "description": "Emit messages about files that were not changed or were ignored due to exclusion patterns. If Black is using a configuration file, a message detailing which one it is using will be emitted.",
       "default": false
+    },
+    "plugins": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {"type": "boolean"},
+          {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "options": {"type": "object"},
+              "version": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "properties": {
+        "discovery_paths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of paths to search for plugins."
+        },
+        "disable_all": {
+          "type": "boolean",
+          "description": "Disable all plugins.",
+          "default": false
+        },
+        "enable_by_default": {
+          "type": "boolean",
+          "description": "Enable plugins by default if not explicitly configured.",
+          "default": true
+        }
+      },
+      "description": "Configuration for Black plugins."
     }
   }
 }

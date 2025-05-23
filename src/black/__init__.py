@@ -3,6 +3,7 @@ import json
 import platform
 import re
 import sys
+import time
 import tokenize
 import traceback
 from collections.abc import (
@@ -478,6 +479,54 @@ def validate_regex(
         " detailing which one it is using will be emitted."
     ),
 )
+@click.option(
+    "--plugin",
+    metavar="NAME[:OPTION1=VALUE1,OPTION2=VALUE2,...]",
+    action="append",
+    help="Enable plugin with optional configuration parameters. Can be used multiple times."
+)
+@click.option(
+    "--list-plugins",
+    is_flag=True,
+    help="List available plugins with descriptions and default settings."
+)
+@click.option(
+    "--disable-plugin",
+    metavar="NAME",
+    action="append",
+    help="Explicitly disable a specific plugin."
+)
+@click.option(
+    "--disable-all-plugins",
+    is_flag=True,
+    help="Run without any plugins enabled."
+)
+@click.option(
+    "--plugin-config",
+    metavar="PATH",
+    help="Path to an external plugin configuration file (pyproject.toml format)."
+)
+@click.option(
+    "--profile",
+    metavar="NAME",
+    help="Use a predefined formatting profile (e.g., pycharm, vscode, google).",
+)
+@click.option(
+    "--list-profiles",
+    is_flag=True,
+    help="List available formatting profiles and exit.",
+)
+@click.option(
+    "--save-profile",
+    metavar="NAME",
+    help="Save current configuration as a named profile.",
+)
+@click.option(
+    "--export-profile",
+    nargs=2,
+    metavar=("PROFILE", "FILENAME"),
+    help="Export profile to a file.",
+)
 @click.version_option(
     version=__version__,
     message=(
@@ -530,6 +579,15 @@ def main(  # noqa: C901
     enable_unstable_feature: list[Preview],
     quiet: bool,
     verbose: bool,
+    plugin: Optional[list[str]],
+    list_plugins: bool,
+    disable_plugin: Optional[list[str]],
+    disable_all_plugins: bool,
+    plugin_config: Optional[str],
+    profile: Optional[str],
+    list_profiles: bool,
+    save_profile: Optional[str],
+    export_profile: Optional[tuple[str, str]],
     required_version: Optional[str],
     include: Pattern[str],
     exclude: Optional[Pattern[str]],
@@ -551,6 +609,153 @@ def main(  # noqa: C901
             "Please upgrade to Python 3.12.6 or downgrade to Python 3.12.4"
         )
         ctx.exit(1)
+
+    # Handle profile listing
+    if list_profiles:
+        try:
+            from black.profiles import list_profiles
+
+            profiles = list_profiles()
+            if not profiles:
+                out("No profiles found.")
+                ctx.exit(0)
+
+            out("Available profiles:")
+            for profile in profiles:
+                out(f"\n{profile['name']}")
+                out(f"  {profile['description']}")
+                if profile['parent']:
+                    out(f"  Parent: {profile['parent']}")
+                out(f"  Settings: {profile['settings_count']}")
+
+            ctx.exit(0)
+        except ImportError:
+            err("Profile system not available.")
+            ctx.exit(1)
+        except Exception as e:
+            err(f"Error listing profiles: {e}")
+            ctx.exit(1)
+
+    # Handle profile export
+    if export_profile:
+        try:
+            from black.profiles import export_profile as export_profile_func
+
+            profile_name, file_path = export_profile
+            if export_profile_func(profile_name, file_path):
+                out(f"Profile '{profile_name}' exported to {file_path}")
+                ctx.exit(0)
+            else:
+                err(f"Profile '{profile_name}' not found.")
+                ctx.exit(1)
+        except ImportError:
+            err("Profile system not available.")
+            ctx.exit(1)
+        except Exception as e:
+            err(f"Error exporting profile: {e}")
+            ctx.exit(1)
+
+    # Handle saving profile
+    if save_profile:
+        try:
+            from black.profiles import save_profile as save_profile_func
+
+            # Extract current settings from context
+            settings = {}
+            for param_name, param_value in ctx.params.items():
+                # Only include formatting-related parameters
+                if param_name in (
+                    "line_length", "target_version", "skip_string_normalization",
+                    "skip_magic_trailing_comma", "preview", "unstable"
+                ) and param_value is not None:
+                    # Convert target_version to strings for serialization
+                    if param_name == "target_version" and param_value:
+                        settings[param_name] = [v.name.lower() for v in param_value]
+                    else:
+                        settings[param_name] = param_value
+
+            # Get a description from the user
+            description = click.prompt(
+                "Enter a description for this profile",
+                default=f"Custom profile created on {time.strftime('%Y-%m-%d')}"
+            )
+
+            if save_profile_func(save_profile, description, settings):
+                out(f"Profile '{save_profile}' saved successfully.")
+                ctx.exit(0)
+            else:
+                err(f"Failed to save profile '{save_profile}'.")
+                ctx.exit(1)
+        except ImportError:
+            err("Profile system not available.")
+            ctx.exit(1)
+        except Exception as e:
+            err(f"Error saving profile: {e}")
+            ctx.exit(1)
+
+    # Handle plugin listing
+    if list_plugins:
+        try:
+            from black.plugins.registry import PluginRegistry
+
+            registry = PluginRegistry()
+            registry.discover_plugins()
+
+            if not registry.plugin_classes:
+                out("No plugins found.")
+                ctx.exit(0)
+
+            out("Available plugins:")
+            for name, plugin_class in registry.plugin_classes.items():
+                out(f"\n{name} (v{plugin_class.PLUGIN_VERSION})")
+                out(f"  {plugin_class.PLUGIN_DESCRIPTION}")
+
+                # Show default options if available
+                default_options = plugin_class.get_default_options()
+                if default_options:
+                    out("  Default options:")
+                    for option, value in default_options.items():
+                        out(f"    {option} = {value}")
+
+            ctx.exit(0)
+        except ImportError:
+            err("Plugin system not available.")
+            ctx.exit(1)
+        except Exception as e:
+            err(f"Error listing plugins: {e}")
+            ctx.exit(1)
+
+    # Apply profile if specified
+    if profile:
+        try:
+            from black.profiles import load_profile
+
+            profile_config = load_profile(profile)
+            if profile_config:
+                # Update context parameters with profile settings
+                for key, value in profile_config.items():
+                    # Only update if the parameter wasn't explicitly set by the user
+                    param_source = ctx.get_parameter_source(key)
+                    if param_source != ParameterSource.COMMANDLINE:
+                        if key == "target_version" and isinstance(value, list):
+                            # Convert string target versions to enum values
+                            ctx.params[key] = [
+                                TargetVersion[v.upper()] for v in value
+                            ]
+                        else:
+                            ctx.params[key] = value
+
+                if verbose:
+                    out(f"Using profile: {profile}")
+            else:
+                err(f"Profile '{profile}' not found.")
+                ctx.exit(1)
+        except ImportError:
+            err("Profile system not available.")
+            ctx.exit(1)
+        except Exception as e:
+            err(f"Error applying profile: {e}")
+            ctx.exit(1)
 
     if src and code is not None:
         out(
@@ -1237,7 +1442,36 @@ def _format_str_once(
         # This should be called after normalize_fmt_off.
         convert_unchanged_lines(src_node, lines)
 
-    line_generator = LineGenerator(mode=mode, features=context_manager_features)
+    # Initialize the base line generator
+    base_line_generator = LineGenerator(mode=mode, features=context_manager_features)
+
+    # Initialize plugin system if available
+    try:
+        from black.plugins.integration import create_plugin_line_generator, initialize_plugins
+
+        # Get CLI arguments from global context if available
+        import inspect
+        frame = inspect.currentframe()
+        cli_args = None
+        while frame:
+            if 'ctx' in frame.f_locals and hasattr(frame.f_locals['ctx'], 'params'):
+                cli_args = frame.f_locals['ctx']
+                break
+            frame = frame.f_back
+
+        # Initialize plugins from configuration
+        initialize_plugins(cli_args=cli_args)
+
+        # Create a plugin-enabled line generator
+        context = {"filename": getattr(src_node, "filename", "<unknown>")}
+        line_generator = create_plugin_line_generator(
+            base_line_generator, mode=mode, context=context
+        )
+    except (ImportError, Exception):
+        # Fall back to the base line generator if plugin system is not available
+        # or if there's an error initializing it
+        line_generator = base_line_generator
+
     elt = EmptyLineTracker(mode=mode)
     split_line_features = {
         feature

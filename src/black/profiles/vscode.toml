@@ -1,0 +1,8 @@
+[profile]
+name = "vscode"
+description = "Profile compatible with VS Code defaults"
+version = "1.0"
+parent = "default"
+
+[profile.settings]
+line_length = 100

@@ -1,0 +1,9 @@
+[profile]
+name = "pycharm"
+description = "Profile compatible with PyCharm defaults"
+version = "1.0"
+parent = "default"
+
+[profile.settings]
+line_length = 120
+skip_string_normalization = true
